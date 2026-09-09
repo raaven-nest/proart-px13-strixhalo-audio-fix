@@ -1,0 +1,37 @@
+# ASUS ProArt PX13 - cap the TAS2783 speaker-amp analog gain.
+#
+# The mainline `snd_soc_tas2783_sdw` driver on this hardware is a plain
+# register-map driver with NO SmartAmp DSP: there is no cone-excursion
+# model and no voice-coil thermal model protecting the tiny speakers, and
+# the real-time IV-sense feedback link is broken anyway. The amp chip's
+# own silicon safeguards (over-temp shutdown, over-current, DC / short
+# detect, UVLO) still run, but nothing limits mechanical/thermal
+# over-drive of the speaker itself.
+#
+# As a conservative substitute this unit lowers the amp's ANALOG gain at
+# every login. Range is 0..20  ->  +11.0 dB .. +21.0 dB (0.5 dB / step).
+# +21 dB (value 20) is the chip maximum; the default here is value 10
+# (+16 dB), i.e. a 5 dB cut. It applies to every audio path, including
+# `aplay` straight to the device.
+#
+# Change the cap:  systemctl --user edit tas2783-amp-cap.service
+#   [Service]
+#   Environment=AMP_GAIN=8      # lower = safer / quieter, higher = louder
+#   systemctl --user restart tas2783-amp-cap.service
+
+[Unit]
+Description=Cap TAS2783 speaker-amp analog gain (no SmartAmp DSP protection on Linux)
+After=sound.target
+Wants=sound.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=AMP_GAIN=10
+# Wait for the SoundWire card to enumerate (ALSA id: amdsoundwire).
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do /usr/bin/amixer -c amdsoundwire sget "tas2783-1 Amp" >/dev/null 2>&1 && exit 0; sleep 1; done; exit 0'
+ExecStart=/usr/bin/amixer -c amdsoundwire sset 'tas2783-1 Amp' ${AMP_GAIN}
+ExecStart=/usr/bin/amixer -c amdsoundwire sset 'tas2783-2 Amp' ${AMP_GAIN}
+
+[Install]
+WantedBy=default.target
