@@ -12,6 +12,15 @@ systemctl --user disable --now tas2783-amp-cap.service 2>/dev/null || true
 rm -f "$SD_DST/tas2783-amp-cap.service"
 systemctl --user daemon-reload
 
+echo "==> Removing suspend/resume recovery service"
+RESUME_UNIT="/etc/systemd/system/proart-audio-resume.service"
+if [ -f "$RESUME_UNIT" ]; then
+  if [ "$(id -u)" = 0 ]; then SUDO=""; else SUDO="sudo"; fi
+  $SUDO systemctl disable --now proart-audio-resume.service 2>/dev/null || true
+  $SUDO rm -f "$RESUME_UNIT"
+  $SUDO systemctl daemon-reload
+fi
+
 echo "==> Removing WirePlumber drop-in"
 rm -f "$WP_DST/99-proart-px13-audio.conf"
 

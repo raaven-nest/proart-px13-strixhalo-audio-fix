@@ -1,0 +1,41 @@
+# ASUS ProArt PX13 (HN7306) - recover SoundWire audio after resume.
+#
+# On this hardware audio comes up fine from a cold boot, but after every
+# suspend / lid-close the speaker playback PCM comes back wedged in an
+# -EPIPE state:
+#
+#   spa.alsa: hw:1,2p: snd_pcm_avail after recover: Broken pipe
+#
+# The kernel / card side recovers correctly on resume - only PipeWire is
+# stuck. Simply restarting the user audio stack clears it; no module
+# reload and no reboot are needed. This oneshot does that on every resume,
+# then re-applies the TAS2783 gain cap (which the card forgets across a
+# suspend cycle).
+#
+# This is the ONE root-owned piece of the workaround: a systemd --user
+# unit cannot hook suspend.target, so recovery has to run as a system
+# unit that then reaches into the user session.
+#
+# install.sh substitutes @USER@ / @UID@ with the target user before
+# copying this file to /etc/systemd/system/.
+#
+# The "-M @USER@@" form talks to the user's `systemd --user` instance via
+# systemd-machined and is what is tested here. If your distro lacks
+# machined (or it misbehaves), swap the two ExecStart lines for the
+# runuser form:
+#
+#   ExecStart=/usr/bin/runuser -u @USER@ -- /bin/sh -c 'export XDG_RUNTIME_DIR=/run/user/@UID@; systemctl --user restart wireplumber pipewire pipewire-pulse; systemctl --user restart tas2783-amp-cap.service'
+
+[Unit]
+Description=Recover ProArt PX13 SoundWire audio after resume from suspend
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+# Give PipeWire a moment to notice the card is back before we bounce it.
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/systemctl --user -M @USER@@ restart wireplumber pipewire pipewire-pulse
+ExecStart=-/usr/bin/systemctl --user -M @USER@@ restart tas2783-amp-cap.service
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

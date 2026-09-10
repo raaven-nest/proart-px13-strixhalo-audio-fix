@@ -25,8 +25,14 @@ sec "card mixer controls"
 sec "tas2783 amp gain"
   amixer -c amdsoundwire sget 'tas2783-1 Amp' 2>&1 | tail -3
   amixer -c amdsoundwire sget 'tas2783-2 Amp' 2>&1 | tail -3
+sec "post-resume -EPIPE / broken-pipe on the speaker PCM"
+  { journalctl --user -u wireplumber -u pipewire -b 2>/dev/null; } \
+  | grep -iE 'snd_pcm_avail|Broken pipe|-EPIPE|suspend|resume' | tail -30
 sec "installed workaround files"
   ls -l "${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d/99-proart-px13-audio.conf" 2>&1
   ls -l "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/tas2783-amp-cap.service" 2>&1
   systemctl --user is-enabled tas2783-amp-cap.service 2>&1
+  ls -l /etc/systemd/system/proart-audio-resume.service 2>&1
+  systemctl is-enabled proart-audio-resume.service 2>&1
+  systemctl status proart-audio-resume.service --no-pager -n 10 2>&1 | tail -15
 echo

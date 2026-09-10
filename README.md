@@ -7,6 +7,8 @@ is fixed upstream.
 > Tested on Bazzite 44 (kernel `7.2.3`), PipeWire 1.6, WirePlumber 0.5,
 > September 2026. Distro-agnostic — anything with PipeWire + WirePlumber and
 > a systemd **user** session (Fedora/Bazzite, Arch, openSUSE, Ubuntu 24.10+, …).
+> `systemd-machined` is used for the resume hook (present by default on the
+> distros above).
 
 ---
 
@@ -14,6 +16,9 @@ is fixed upstream.
 
 - No audio devices, or only a **"Dummy Output"** in your sound settings.
 - `wpctl status` shows the card but no usable sink.
+- Sound works after a cold boot but **dies after every suspend / lid-close**,
+  with `spa.alsa: hw:…p: snd_pcm_avail after recover: Broken pipe` in the
+  PipeWire log.
 - Kernel log fills with:
   ```
   soundwire sdw-master-0-1: Program params failed: -22
@@ -38,12 +43,15 @@ over-drive of the small *speakers*.
 
 ## What this repo does
 
-Everything is **user-scoped** — no root, no system files, no reboot.
+Two pieces are **user-scoped** (no root, no reboot); a third is a small
+root-owned systemd unit for the suspend/resume case, because a
+`systemd --user` unit cannot hook `suspend.target`.
 
 | Piece | Effect |
 | --- | --- |
 | `99-proart-px13-audio.conf` (WirePlumber drop-in) | Pins the card to the `pro-audio` profile so the working PCMs are exposed; names the nodes (`Speakers`, `Headphones`, `Built-in Microphone`, `Headset Microphone`); makes `Speakers` the default output; disables the dead IV-sense capture PCM so it stops spamming `-22` in the kernel log. |
 | `tas2783-amp-cap.service` (systemd **user** unit) | Caps the TAS2783 **analog** gain from +21 dB to **+16 dB** (a 5 dB cut) at every login — a conservative stand-in for the missing DSP protection. Applies to every audio path. |
+| `proart-audio-resume.service` (systemd **system** unit) | On resume from suspend/hibernate, restarts `wireplumber pipewire pipewire-pulse` in the user session and re-applies the gain cap. Without it the speaker PCM comes back wedged in a `-EPIPE` / "Broken pipe" state and there is no sound until you restart the audio stack by hand. `install.sh` bakes your username / UID into it. |
 
 ### Trade-offs
 
@@ -53,6 +61,9 @@ Everything is **user-scoped** — no root, no system files, no reboot.
   with bass-heavy content (deep-bass music, movie LFE, test tones) and
   don't sit at 100% for long stretches. Tune the cap lower if you want
   more margin (see below).
+- **The resume hook is a blunt restart.** It bounces the whole user audio
+  stack on every resume, so anything that was playing is interrupted for
+  ~1 s and apps may need to re-open their stream.
 
 ## Install
 
@@ -62,6 +73,11 @@ cd proart-px13-strixhalo-audio-fix
 ./install.sh
 ```
 
+`install.sh` runs unprivileged for the two user-scoped pieces, then calls
+`sudo` once to install and enable `proart-audio-resume.service`. If `sudo`
+is unavailable it skips that step with a warning — everything except
+suspend/resume recovery still works.
+
 Log out and back in (or reboot) if sound doesn't come up immediately.
 
 ## Verify
@@ -70,7 +86,15 @@ Log out and back in (or reboot) if sound doesn't come up immediately.
 wpctl status | sed -n '/Sinks:/,/Filters:/p'          # -> Speakers, Headphones
 amixer -c amdsoundwire sget 'tas2783-1 Amp' | tail -1  # -> [16.00dB]
 systemctl --user is-enabled tas2783-amp-cap.service    # -> enabled
+systemctl is-enabled proart-audio-resume.service       # -> enabled
 speaker-test -D pipewire -c 2 -t sine -f 440 -l 1      # brief tone
+```
+
+To test the resume path without a real suspend cycle:
+
+```sh
+sudo systemctl start proart-audio-resume.service       # should restart the stack cleanly
+sudo systemctl suspend                                  # then resume and confirm sound still works
 ```
 
 ## Tune the gain cap
@@ -94,7 +118,8 @@ systemctl --user restart tas2783-amp-cap.service
 ```sh
 ./uninstall.sh
 ```
-Restores the amp gain, removes both files, and clears the saved profile
+Restores the amp gain, removes the WirePlumber drop-in and both systemd
+units (using `sudo` for the system one), and clears the saved profile
 choice. The kernel bug is still there afterwards, so expect the Dummy
 Output to return until a fixed kernel ships.
 
@@ -105,7 +130,9 @@ workaround:
 
 - a real `Speakers` / `Analog Stereo` card profile appears (not just
   `pro-audio` / `off`), **and/or**
-- the `Program params failed: -22` / `ASoC error (-22)` lines stop.
+- the `Program params failed: -22` / `ASoC error (-22)` lines stop, **and**
+- sound survives a suspend/resume cycle without a `snd_pcm_avail … Broken
+  pipe` in the PipeWire log.
 
 At that point run `./uninstall.sh`.
 
